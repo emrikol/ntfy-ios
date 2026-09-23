@@ -17,6 +17,16 @@ class ApiService {
         Log.d(tag, "Polling from \(urlString) with user \(user?.username ?? "anonymous")")
         fetchJsonData(urlString: urlString, user: user, completionHandler: completionHandler)
     }
+
+    func poll(baseUrl: String, topic: String, since: String, user: BasicUser?, completionHandler: @escaping ([Message]?, Error?) -> Void) {
+        guard let url = URL(string: topicUrl(baseUrl: baseUrl, topic: topic)) else {
+            completionHandler(nil, URLError(.badURL))
+            return
+        }
+        let urlString = "\(url)/json?poll=1&since=\(since)"
+        Log.d(tag, "Polling backlog from \(urlString) with user \(user?.displayName ?? "anonymous")")
+        fetchJsonData(urlString: urlString, user: user, completionHandler: completionHandler)
+    }
     
     func poll(subscription: Subscription, messageId: String, user: BasicUser?, completionHandler: @escaping (Message?, Error?) -> Void) {
         poll(baseUrl: subscription.baseUrl ?? "?", topic: subscription.topic ?? "?", messageId: messageId, user: user, completionHandler: completionHandler)
@@ -169,8 +179,19 @@ class ApiService {
 struct BasicUser {
     let username: String
     let password: String
+
+    var isToken: Bool {
+        username.isEmpty
+    }
+
+    var displayName: String {
+        isToken ? "access token" : username
+    }
     
     func toHeader() -> String {
+        if isToken {
+            return "Bearer \(password)"
+        }
         return "Basic " + String(format: "%@:%@", username, password).data(using: String.Encoding.utf8)!.base64EncodedString()
     }
 }

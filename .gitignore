@@ -2,3 +2,4 @@
 AuthKey_*.p8
 ntfy.xcodeproj/xcuserdata
 ntfy.xcodeproj/project.xcworkspace/xcuserdata/
+.build/

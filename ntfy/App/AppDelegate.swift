@@ -153,7 +153,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, ObservableObject {
     }
 
     private func showNotification(baseUrl: String, _ message: Message, completionHandler: (() -> Void)? = nil) {
-        let user = Store.shared.getUser(baseUrl: baseUrl)?.toBasicUser()
+        let user = Store.shared.getBasicUser(baseUrl: baseUrl)
         let content = UNMutableNotificationContent()
         content.modify(message: message, baseUrl: baseUrl)
         content.attachImageIfNeeded(message: message, user: user) {
@@ -219,7 +219,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         
         // Execute user action or click action (if any)
         if let action = action {
-            ActionExecutor.execute(action)
+            ActionExecutor.execute(action, notificationId: response.notification.request.identifier)
         } else if let click = message.click, click != "", let url = URL(string: click) {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
         }

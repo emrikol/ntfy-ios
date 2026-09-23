@@ -1,10 +1,11 @@
 import Foundation
 import UIKit
+import UserNotifications
 
 struct ActionExecutor {
     private static let tag = "ActionExecutor"
         
-    static func execute(_ action: Action) {
+    static func execute(_ action: Action, notificationId: String? = nil) {
         Log.d(tag, "Executing user action", action)
         switch action.action {
         case "view":
@@ -17,6 +18,10 @@ struct ActionExecutor {
             http(action)
         default:
             Log.w(tag, "Action \(action.action) not supported", action)
+        }
+
+        if action.clear == true, let notificationId {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notificationId])
         }
     }
     

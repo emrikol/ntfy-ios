@@ -335,11 +335,13 @@ struct Message: Decodable {
     var actions: [Action]?
     var click: String?
     var pollId: String?
+    var sequenceId: String?
     var attachment: MessageAttachment?
 
     enum CodingKeys: String, CodingKey {
         case id, time, event, topic, message, title, priority, tags, actions, click, attachment
         case pollId = "poll_id"
+        case sequenceId = "sequence_id"
     }
 
     init(
@@ -354,6 +356,7 @@ struct Message: Decodable {
         actions: [Action]? = nil,
         click: String? = nil,
         pollId: String? = nil,
+        sequenceId: String? = nil,
         attachment: MessageAttachment? = nil
     ) {
         self.id = id
@@ -367,6 +370,7 @@ struct Message: Decodable {
         self.actions = actions
         self.click = click
         self.pollId = pollId
+        self.sequenceId = sequenceId
         self.attachment = attachment
     }
 
@@ -383,6 +387,7 @@ struct Message: Decodable {
         actions = try container.decodeIfPresent([Action].self, forKey: .actions)
         click = try container.decodeIfPresent(String.self, forKey: .click)
         pollId = try container.decodeIfPresent(String.self, forKey: .pollId)
+        sequenceId = try container.decodeIfPresent(String.self, forKey: .sequenceId)
         attachment = try container.decodeIfPresent(MessageAttachment.self, forKey: .attachment)
     }
     
@@ -401,7 +406,8 @@ struct Message: Decodable {
             "tags": tags?.joined(separator: ",") ?? "",
             "actions": Actions.shared.encode(actions),
             "click": click ?? "",
-            "poll_id": pollId ?? ""
+            "poll_id": pollId ?? "",
+            "sequence_id": sequenceId ?? ""
         ]
         if let attachment {
             userInfo["attachment_name"] = attachment.name
@@ -429,6 +435,7 @@ struct Message: Decodable {
         let actions = userInfo["actions"] as? String
         let click = userInfo["click"] as? String
         let pollId = userInfo["poll_id"] as? String
+        let sequenceId = userInfo["sequence_id"] as? String
         let attachmentUrl = userInfo["attachment_url"] as? String
         let attachment: MessageAttachment?
         if let attachmentUrl = attachmentUrl, !attachmentUrl.isEmpty {
@@ -454,6 +461,7 @@ struct Message: Decodable {
             actions: Actions.shared.parse(actions),
             click: click,
             pollId: pollId,
+            sequenceId: sequenceId,
             attachment: attachment
         )
     }

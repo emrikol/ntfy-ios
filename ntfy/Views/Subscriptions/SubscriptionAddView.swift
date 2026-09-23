@@ -13,6 +13,7 @@ struct SubscriptionAddView: View {
     @State private var showLogin: Bool = false
     @State private var username: String = ""
     @State private var password: String = ""
+    @State private var useToken: Bool = false
     
     @State private var loading = false
     @State private var addError: String?
@@ -95,13 +96,24 @@ struct SubscriptionAddView: View {
     private var loginView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
+                Section {
+                    Toggle("Authenticate using an access token", isOn: $useToken)
+                }
                 Section(
-                    footer: Text("This topic requires that you log in with username and password. The user will be stored on your device, and will be re-used for other topics.")
+                    footer: Text(useToken
+                        ? "Enter a revocable ntfy access token. It will be stored securely and reused for other topics on this server."
+                        : "Enter your username and password. They will be stored securely and reused for other topics on this server.")
                 ) {
-                    TextField("Username", text: $username)
-                        .disableAutocapitalization()
-                        .disableAutocorrection(true)
-                    SecureField("Password", text: $password)
+                    if useToken {
+                        SecureField("Access token", text: $password)
+                            .disableAutocapitalization()
+                            .disableAutocorrection(true)
+                    } else {
+                        TextField("Username", text: $username)
+                            .disableAutocapitalization()
+                            .disableAutocorrection(true)
+                        SecureField("Password", text: $password)
+                    }
                 }
             }
             if let error = loginError {
@@ -143,7 +155,7 @@ struct SubscriptionAddView: View {
     }
     
     private func isLoginViewValid() -> Bool {
-        if username.isEmpty || password.isEmpty {
+        if password.isEmpty || (!useToken && username.isEmpty) {
             return false
         }
         return true
@@ -152,7 +164,7 @@ struct SubscriptionAddView: View {
     private func subscribeOrShowLoginAction() {
         loading = true
         addError = nil
-        let user = store.getUser(baseUrl: selectedBaseUrl)?.toBasicUser()
+        let user = store.getBasicUser(baseUrl: selectedBaseUrl)
         ApiService.shared.checkAuth(baseUrl: selectedBaseUrl, topic: sanitizedTopic, user: user) { result in
             switch result {
             case .Success:
@@ -163,7 +175,7 @@ struct SubscriptionAddView: View {
                 // Do not reset "loading", because resetAndHide() will do that after everything is done
             case .Unauthorized:
                 if let user = user {
-                    addError = "User \(user.username) is not authorized to read this topic"
+                    addError = "The saved \(user.displayName) is not authorized to read this topic"
                 } else {
                     addError = nil // Reset
                     showLogin = true
@@ -179,18 +191,21 @@ struct SubscriptionAddView: View {
     private func subscribeWithUserAction() {
         loading = true
         loginError = nil
-        let user = BasicUser(username: username, password: password)
+        let savedUsername = useToken ? "" : username
+        let user = BasicUser(username: savedUsername, password: password)
         ApiService.shared.checkAuth(baseUrl: selectedBaseUrl, topic: sanitizedTopic, user: user) { result in
             switch result {
             case .Success:
                 DispatchQueue.global(qos: .background).async {
-                    store.saveUser(baseUrl: selectedBaseUrl, username: username, password: password)
+                    store.saveUser(baseUrl: selectedBaseUrl, username: savedUsername, password: password)
                     subscriptionManager.subscribe(baseUrl: selectedBaseUrl, topic: sanitizedTopic)
                     resetAndHide()
                 }
                 // Do not reset "loading", because resetAndHide() will do that after everything is done
             case .Unauthorized:
-                loginError = "Invalid credentials, or user \(username) is not authorized to read this topic"
+                loginError = useToken
+                    ? "Invalid access token, or the token is not authorized to read this topic"
+                    : "Invalid credentials, or user \(username) is not authorized to read this topic"
                 loading = false
             case .Error(let err):
                 loginError = err
@@ -217,6 +232,9 @@ struct SubscriptionAddView: View {
             baseUrl = ""
             topic = ""
             useAnother = false
+            useToken = false
+            username = ""
+            password = ""
         }
     }
 }

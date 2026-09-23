@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 enum UserDialog: Identifiable {
     case add

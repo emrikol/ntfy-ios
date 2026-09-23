@@ -18,6 +18,7 @@ struct UserEditorView: View {
     @State private var baseUrl: String
     @State private var username: String
     @State private var password: String
+    @State private var useToken: Bool
     
     init(
         selectedUser: User?,
@@ -32,25 +33,37 @@ struct UserEditorView: View {
         _baseUrl = State(initialValue: selectedUser?.baseUrl ?? "")
         _username = State(initialValue: selectedUser?.username ?? "")
         _password = State(initialValue: "")
+        _useToken = State(initialValue: selectedUser?.username?.isEmpty == true)
     }
     
     var body: some View {
         NavigationView {
             Form {
-                Section(
-                    footer: isNewUser
-                    ? Text("You can add a user here. All topics for the given server will use this user.")
-                    : Text("Edit the username or password for \(shortUrl(url: baseUrl)) here. This user is used for all topics of this server. Leave the password blank to leave it unchanged.")
-                ) {
-                    if isNewUser {
+                if isNewUser {
+                    Section {
                         TextField("Service URL, e.g. https://ntfy.home.io", text: $baseUrl)
                             .disableAutocapitalization()
                             .disableAutocorrection(true)
                     }
-                    TextField("Username", text: $username)
-                        .disableAutocapitalization()
-                        .disableAutocorrection(true)
-                    SecureField("Password", text: $password)
+                }
+                Section {
+                    Toggle("Authenticate using an access token", isOn: $useToken)
+                }
+                Section(
+                    footer: isNewUser
+                    ? Text("All topics for this server will reuse these credentials. Access tokens are recommended because they can be revoked without changing your account password.")
+                    : Text("These credentials are used for every topic on \(shortUrl(url: baseUrl)). Leave the secret blank to keep the existing one.")
+                ) {
+                    if useToken {
+                        SecureField("Access token", text: $password)
+                            .disableAutocapitalization()
+                            .disableAutocorrection(true)
+                    } else {
+                        TextField("Username", text: $username)
+                            .disableAutocapitalization()
+                            .disableAutocorrection(true)
+                        SecureField("Password", text: $password)
+                    }
                 }
             }
             .navigationTitle(isNewUser ? "Add user" : "Edit user")
@@ -98,13 +111,7 @@ struct UserEditorView: View {
     }
     
     private func saveAction() {
-        let finalPassword: String
-        if let user = selectedUser, password.isEmpty {
-            finalPassword = user.password ?? "?"
-        } else {
-            finalPassword = password
-        }
-        onSave(baseUrl, username, finalPassword)
+        onSave(baseUrl, useToken ? "" : username, password)
     }
     
     private func deleteAction() {
@@ -113,15 +120,19 @@ struct UserEditorView: View {
     }
     
     private func isValid() -> Bool {
+        let existingUsesToken = selectedUser?.username?.isEmpty == true
+        let changedAuthenticationType = selectedUser != nil && existingUsesToken != useToken
         if isNewUser {
             if baseUrl.range(of: "^https?://.+", options: .regularExpression, range: nil, locale: nil) == nil {
                 return false
-            } else if username.isEmpty || password.isEmpty {
+            } else if password.isEmpty || (!useToken && username.isEmpty) {
                 return false
             } else if store.getUser(baseUrl: baseUrl) != nil {
                 return false
             }
-        } else if username.isEmpty {
+        } else if changedAuthenticationType && password.isEmpty {
+            return false
+        } else if !useToken && username.isEmpty {
             return false
         }
         return true

@@ -43,11 +43,11 @@ extension UNMutableNotificationContent {
         // Map priorities to interruption level (light up screen, ...) and relevance (order)
         switch message.priority {
         case 1:
-            self.sound = .default
+            self.sound = nil
             self.interruptionLevel = .passive
             self.relevanceScore = 0
         case 2:
-            self.sound = .default
+            self.sound = nil
             self.interruptionLevel = .passive
             self.relevanceScore = 0.25
         case 4:

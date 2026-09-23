@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import StoreKit
+import UserNotifications
 
 struct SettingsView: View {
     @EnvironmentObject private var store: Store
@@ -22,10 +23,12 @@ struct SettingsView: View {
                 ) {
                     AttachmentAutoDownloadView()
                 }
-                Section(
-                    footer: Text("Max priority notifications break through to grab your attention, appearing on the lock screen and playing a sound even when focus mode is on or your device is muted.")
-                ) {
-                    CriticalAlertsSettingView()
+                if delegate.criticalAlertSetting != .notSupported {
+                    Section(
+                        footer: Text("Max priority notifications break through to grab your attention, appearing on the lock screen and playing a sound even when focus mode is on or your device is muted.")
+                    ) {
+                        CriticalAlertsSettingView()
+                    }
                 }
                 Section(
                     header: Text("Users"),
@@ -49,9 +52,14 @@ struct SettingsView: View {
                 },
                 onDelete: { user in
                     if let baseUrl = user.baseUrl {
-                        DirectAPNSManager.shared.unregister(baseUrl: baseUrl, user: user.toBasicUser())
+                        let credential = store.getBasicUser(baseUrl: baseUrl)
+                        DirectAPNSManager.shared.unregister(
+                            baseUrl: baseUrl,
+                            user: credential,
+                            removeCredentialAfterSuccess: true
+                        )
                     }
-                    store.delete(user: user)
+                    store.delete(user: user, deleteCredential: false)
                     userDialog = nil
                 },
                 onCancel: {

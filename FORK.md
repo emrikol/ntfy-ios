@@ -12,11 +12,15 @@ The private app uses:
 - App group: `group.com.emrikol.ntfy`
 - Apple team: `3T9RX85H44`
 
-Critical-alert entitlements are intentionally disabled until Apple grants that entitlement to this app ID. Standard notification sounds continue to work.
+The app has the ordinary time-sensitive-notification entitlement. Critical-alert controls stay hidden because Apple has not granted the separate critical-alert entitlement to this app ID. Standard and time-sensitive notification sounds continue to work.
 
 ## Push delivery
 
 The private branch removes Firebase. The app registers its APNs token and hashed subscriptions with a direct APNs relay at `/_ntfy_apns/v1/registrations` on each authenticated self-hosted server. The relay accepts stock ntfy `poll_request` forwarding and sends the wake-up notification directly to APNs.
+
+Registration state is durable: removing the final subscription or deleting a user queues an authenticated empty registration until the relay confirms it. Credentials are stored in the shared iOS Keychain, not Core Data. Both ntfy username/password credentials and revocable access tokens are supported.
+
+The notification extension fetches the complete backlog after an APNs wake-up so messages received while the phone was offline are not lost. It also handles message updates/deletes, clears notification-center entries requested by actions, and keeps priorities 1 and 2 silent as specified by ntfy.
 
 ## Local secrets
 

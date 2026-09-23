@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 private struct AttachmentAutoDownloadOption: Identifiable {
     let value: Int64

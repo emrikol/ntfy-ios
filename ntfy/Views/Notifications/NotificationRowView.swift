@@ -96,7 +96,7 @@ struct NotificationRowView: View {
                 HStack {
                     ForEach(notification.actionsList()) { action in
                         Button(action.label) {
-                            ActionExecutor.execute(action)
+                            ActionExecutor.execute(action, notificationId: notification.id)
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -125,7 +125,7 @@ struct NotificationRowView: View {
     private var attachmentAuthorizationHeader: String? {
         guard
             let baseUrl = notification.subscription?.baseUrl,
-            let user = store.getUser(baseUrl: baseUrl)?.toBasicUser()
+            let user = store.getBasicUser(baseUrl: baseUrl)
         else {
             return nil
         }

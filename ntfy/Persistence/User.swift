@@ -1,7 +1,10 @@
 import Foundation
 
 extension User {
-    func toBasicUser() -> BasicUser {
-        return BasicUser(username: username ?? "?", password: password ?? "?")
+    func displayName() -> String {
+        guard let username, !username.isEmpty else {
+            return "Access token"
+        }
+        return username
     }
 }
