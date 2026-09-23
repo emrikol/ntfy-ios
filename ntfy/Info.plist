@@ -4,8 +4,6 @@
 <dict>
 	<key>AppBaseURL</key>
 	<string>$(APP_BASE_URL)</string>
-	<key>FirebaseAppDelegateProxyEnabled</key>
-	<false/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

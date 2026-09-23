@@ -44,9 +44,13 @@ struct SettingsView: View {
                 selectedUser: dialog.user,
                 onSave: { baseUrl, username, password in
                     store.saveUser(baseUrl: baseUrl, username: username, password: password)
+                    DirectAPNSManager.shared.sync(baseUrl: baseUrl)
                     userDialog = nil
                 },
                 onDelete: { user in
+                    if let baseUrl = user.baseUrl {
+                        DirectAPNSManager.shared.unregister(baseUrl: baseUrl, user: user.toBasicUser())
+                    }
                     store.delete(user: user)
                     userDialog = nil
                 },

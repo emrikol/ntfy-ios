@@ -1,5 +1,4 @@
 import SwiftUI
-import Firebase
 
 // TODO: Errors are not shown to the user, but instead just logged
 
@@ -28,6 +27,7 @@ struct AppMain: App {
                     Log.d(tag, "App became active, refreshing objects")
                     store.hardRefresh()
                     delegate.refreshNotificationSettings()
+                    DirectAPNSManager.shared.syncAll()
                 }
         }
     }

@@ -21,7 +21,7 @@ class Store: ObservableObject {
 
     static let shared = Store()
     static let tag = "Store"
-    static let appGroup = "group.io.heckel.ntfy" // Must match app group of ntfy = ntfyNSE targets
+    static let appGroup = "group.com.emrikol.ntfy" // Must match app group of ntfy = ntfyNSE targets
     static let modelName = "ntfy" // Must match .xdatamodeld folder
     static let prefKeyDefaultBaseUrl = "defaultBaseUrl"
     static let prefKeyAttachmentAutoDownloadMaxSize = "attachmentAutoDownloadMaxSize"
@@ -119,6 +119,18 @@ class Store: ObservableObject {
     
     func getSubscriptions() -> [Subscription]? {
         return try? context.fetch(Subscription.fetchRequest())
+    }
+
+    func relaySubscriptionSnapshot() -> [(baseUrl: String, topic: String)] {
+        var snapshot: [(baseUrl: String, topic: String)] = []
+        context.performAndWait {
+            guard let subscriptions = try? context.fetch(Subscription.fetchRequest()) else { return }
+            snapshot = subscriptions.compactMap { subscription in
+                guard let baseUrl = subscription.baseUrl, let topic = subscription.topic else { return nil }
+                return (normalizeBaseUrl(baseUrl), topic)
+            }
+        }
+        return snapshot
     }
 
     func completeAttachmentDownload(notificationID: String, localPath: String, resolvedType: String?, resolvedSize: Int64) {

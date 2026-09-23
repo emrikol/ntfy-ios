@@ -19,12 +19,6 @@ func topicHash(baseUrl: String, topic: String) -> String {
     return digest.compactMap { String(format: "%02x", $0)}.joined()
 }
 
-func firebaseTopic(baseUrl: String, topic: String) -> String {
-    return normalizeBaseUrl(baseUrl) == normalizeBaseUrl(Config.appBaseUrl)
-        ? topic
-        : topicHash(baseUrl: baseUrl, topic: topic)
-}
-
 func normalizeBaseUrl(_ baseUrl: String) -> String {
     var normalized = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
     while normalized.hasSuffix("/") {
