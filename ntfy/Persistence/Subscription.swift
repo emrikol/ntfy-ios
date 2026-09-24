@@ -30,9 +30,17 @@ enum TopicAlertMode: String, Codable, CaseIterable, Identifiable {
 enum TopicSoundMode: String, Codable, CaseIterable, Identifiable {
     case systemDefault
     case silent
+    case systemTone
 
     var id: String { rawValue }
-    var label: String { self == .systemDefault ? "System Default" : "Silent" }
+
+    var label: String {
+        switch self {
+        case .systemDefault: return "System Default"
+        case .silent: return "Silent"
+        case .systemTone: return "System Tone"
+        }
+    }
 }
 
 enum TopicPreviewMode: String, Codable, CaseIterable, Identifiable {
@@ -58,6 +66,8 @@ struct TopicPolicy: Codable, Equatable, Identifiable {
     var symbolName: String = "bell"
     var alertMode: TopicAlertMode = .publisher
     var soundMode: TopicSoundMode = .systemDefault
+    var systemToneFileName: String?
+    var systemToneDisplayName: String?
     var previewMode: TopicPreviewMode = .full
     var mutedUntil: Date?
     var retentionDays: Int = 0

@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+import AVFoundation
+#endif
 
 enum ActiveAlert {
     case clear, unsubscribe, selected
@@ -405,18 +408,30 @@ struct TopicSettingsView: View {
 
                 Section(
                     header: Text("Delivery"),
-                    footer: Text("\(policy.alertMode.detail) Apple exposes only the system default notification sound to apps; any app-wide sound choice is managed in iOS Settings.")
+                    footer: deliveryFooter
                 ) {
                     Picker("Alert style", selection: $policy.alertMode) {
                         ForEach(TopicAlertMode.allCases) { mode in
                             Text(mode.label).tag(mode)
                         }
                     }
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+                    NavigationLink {
+                        PrivateSystemTonePickerView(
+                            soundMode: $policy.soundMode,
+                            selectedFileName: $policy.systemToneFileName,
+                            selectedDisplayName: $policy.systemToneDisplayName
+                        )
+                    } label: {
+                        LabeledContent("Sound", value: soundLabel)
+                    }
+#else
                     Picker("Sound", selection: $policy.soundMode) {
-                        ForEach(TopicSoundMode.allCases) { mode in
+                        ForEach([TopicSoundMode.systemDefault, .silent]) { mode in
                             Text(mode.label).tag(mode)
                         }
                     }
+#endif
                     Button("Open iOS Notification Settings") {
                         delegate.openNotificationSettings()
                     }
@@ -516,6 +531,26 @@ struct TopicSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var deliveryFooter: some View {
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+        Text("\(policy.alertMode.detail) This developer build can copy a selected iOS tone into ntfy's private notification-sound library.")
+#else
+        Text("\(policy.alertMode.detail) Apple exposes only the system default notification sound to App Store builds; any app-wide sound choice is managed in iOS Settings.")
+#endif
+    }
+
+    private var soundLabel: String {
+        switch policy.soundMode {
+        case .systemDefault:
+            return TopicSoundMode.systemDefault.label
+        case .silent:
+            return TopicSoundMode.silent.label
+        case .systemTone:
+            return policy.systemToneDisplayName ?? TopicSoundMode.systemTone.label
+        }
+    }
+
     private func symbolLabel(_ symbol: String) -> String {
         switch symbol {
         case "bell": return "Bell"
@@ -536,6 +571,161 @@ struct TopicSettingsView: View {
         }
     }
 }
+
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+private struct PrivateSystemTonePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var soundMode: TopicSoundMode
+    @Binding var selectedFileName: String?
+    @Binding var selectedDisplayName: String?
+    @StateObject private var previewPlayer = SystemTonePreviewPlayer()
+    @State private var searchText = ""
+    @State private var errorMessage: String?
+
+    private let tones = PrivateSystemToneCatalog.availableTones()
+
+    var body: some View {
+        List {
+            Section {
+                soundChoice(
+                    title: "System Default",
+                    subtitle: "Use the notification sound selected by iOS.",
+                    mode: .systemDefault
+                )
+                soundChoice(
+                    title: "Silent",
+                    subtitle: "Deliver without a sound.",
+                    mode: .silent
+                )
+            }
+
+            if tones.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "speaker.slash")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("System Tones Unavailable")
+                        .font(.headline)
+                    Text("This iOS build does not expose a readable system-tone catalog. System Default and Silent remain available.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else {
+                ForEach(collections, id: \.self) { collection in
+                    Section(collection) {
+                        ForEach(filteredTones.filter { $0.collection == collection }) { tone in
+                            Button {
+                                select(tone)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "speaker.wave.2")
+                                        .foregroundStyle(.tint)
+                                        .frame(width: 24)
+                                    Text(tone.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if selectedDisplayName == tone.name && soundMode == .systemTone {
+                                        Image(systemName: "checkmark")
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(.tint)
+                                            .accessibilityLabel("Selected")
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Notification Sound")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search tones")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+                    .fontWeight(.semibold)
+            }
+        }
+        .alert("Couldn't Use Tone", isPresented: errorIsPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "The selected tone is unavailable.")
+        }
+        .onDisappear {
+            previewPlayer.stop()
+        }
+    }
+
+    private var filteredTones: [PrivateSystemTone] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return tones }
+        return tones.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var collections: [String] {
+        ["Current", "Classic"].filter { collection in
+            filteredTones.contains { $0.collection == collection }
+        }
+    }
+
+    private var errorIsPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: { isPresented in
+                if !isPresented { errorMessage = nil }
+            }
+        )
+    }
+
+    private func soundChoice(title: String, subtitle: String, mode: TopicSoundMode) -> some View {
+        Button {
+            previewPlayer.stop()
+            soundMode = mode
+            selectedFileName = nil
+            selectedDisplayName = nil
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: mode == .silent ? "speaker.slash" : "speaker.wave.2")
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if soundMode == mode {
+                    Image(systemName: "checkmark")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.tint)
+                        .accessibilityLabel("Selected")
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func select(_ tone: PrivateSystemTone) {
+        do {
+            let installed = try PrivateSystemToneCatalog.install(tone)
+            try previewPlayer.play(tone)
+            soundMode = .systemTone
+            selectedFileName = installed.fileName
+            selectedDisplayName = installed.displayName
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+#endif
 
 struct NotificationListView_Previews: PreviewProvider {
     static var previews: some View {

@@ -24,6 +24,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, ObservableObject {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         Log.d(tag, "Launching AppDelegate")
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+        Log.d(tag, "Developer system tone catalog contains \(PrivateSystemToneCatalog.availableTones().count) tones")
+#endif
 
         // Register app permissions for push notifications
         UNUserNotificationCenter.current().delegate = self

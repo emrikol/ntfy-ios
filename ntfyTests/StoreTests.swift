@@ -1,5 +1,8 @@
 import XCTest
 import UserNotifications
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+import AVFoundation
+#endif
 @testable import ntfy
 
 final class StoreTests: XCTestCase {
@@ -138,6 +141,8 @@ final class StoreTests: XCTestCase {
             symbolName: "externaldrive",
             alertMode: .timeSensitive,
             soundMode: .silent,
+            systemToneFileName: "ntfy-system-test.caf",
+            systemToneDisplayName: "Rebound",
             previewMode: .titleOnly,
             mutedUntil: mutedUntil,
             retentionDays: 30,
@@ -148,6 +153,16 @@ final class StoreTests: XCTestCase {
 
         XCTAssertEqual(policies.policy(baseUrl: baseUrl, topic: topic), expected)
         defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    func testTopicPolicyDecodesSettingsSavedBeforeSystemTonesExisted() throws {
+        let data = Data(#"{"baseUrl":"https:\/\/example.com","topic":"alerts","alias":"","symbolName":"bell","alertMode":"publisher","soundMode":"systemDefault","previewMode":"full","retentionDays":0,"lastReadTime":0}"#.utf8)
+
+        let policy = try JSONDecoder().decode(TopicPolicy.self, from: data)
+
+        XCTAssertEqual(policy.soundMode, .systemDefault)
+        XCTAssertNil(policy.systemToneFileName)
+        XCTAssertNil(policy.systemToneDisplayName)
     }
 
     func testSilentTopicPolicyOverridesPublisherPriority() {
@@ -182,6 +197,80 @@ final class StoreTests: XCTestCase {
         XCTAssertNotNil(content.sound)
         XCTAssertEqual(content.interruptionLevel, .timeSensitive)
     }
+
+    func testSystemTonePolicyUsesInstalledSoundName() {
+        let baseUrl = "https://example.com"
+        let topic = "tone-\(UUID().uuidString)"
+        var policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic)
+        policy.alertMode = .active
+        policy.soundMode = .systemTone
+        policy.systemToneFileName = "ntfy-system-test.caf"
+        policy.systemToneDisplayName = "Rebound"
+        TopicPolicyStore.shared.save(policy)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        let content = UNMutableNotificationContent()
+        let message = Message(id: "id", time: 1, event: "message", topic: topic, message: "hello")
+
+        content.modify(message: message, baseUrl: baseUrl)
+
+        XCTAssertEqual(
+            content.sound,
+            UNNotificationSound(named: UNNotificationSoundName(rawValue: "ntfy-system-test.caf"))
+        )
+    }
+
+#if DEBUG && NTFY_PRIVATE_SYSTEM_TONES
+    func testDeveloperSystemToneCatalogInstallsCurrentToneInSharedSoundsDirectory() throws {
+        let fixtureRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SystemToneCatalog-\(UUID().uuidString)", isDirectory: true)
+        let currentDirectory = fixtureRoot.appendingPathComponent("EncoreInfinitum", isDirectory: true)
+        let soundsDirectory = fixtureRoot.appendingPathComponent("InstalledSounds", isDirectory: true)
+        try FileManager.default.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
+        let fixtureTone = currentDirectory.appendingPathComponent("Rebound-EncoreInfinitum.caf")
+        try Data("fixture audio".utf8).write(to: fixtureTone)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        let tone = try XCTUnwrap(
+            PrivateSystemToneCatalog.availableTones(catalogRoot: fixtureRoot).first { $0.collection == "Current" }
+        )
+
+        let installed = try PrivateSystemToneCatalog.install(tone, soundsDirectory: soundsDirectory)
+        let installedUrl = try XCTUnwrap(
+            PrivateSystemToneCatalog.installedUrl(fileName: installed.fileName, soundsDirectory: soundsDirectory)
+        )
+
+        XCTAssertEqual(installed.displayName, "Rebound")
+        XCTAssertEqual(installedUrl.deletingLastPathComponent(), soundsDirectory)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installedUrl.path))
+    }
+
+    func testDeveloperSystemToneCatalogConvertsNonCafTone() throws {
+        let fixtureRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SystemToneConversion-\(UUID().uuidString)", isDirectory: true)
+        let classicDirectory = fixtureRoot.appendingPathComponent("Classic", isDirectory: true)
+        let soundsDirectory = fixtureRoot.appendingPathComponent("InstalledSounds", isDirectory: true)
+        try FileManager.default.createDirectory(at: classicDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let source = classicDirectory.appendingPathComponent("Test.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let audio = try AVAudioFile(forWriting: source, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 441))
+        buffer.frameLength = 441
+        try audio.write(from: buffer)
+        let tone = try XCTUnwrap(
+            PrivateSystemToneCatalog.availableTones(catalogRoot: fixtureRoot).first { $0.name == "Test" }
+        )
+
+        let installed = try PrivateSystemToneCatalog.install(tone, soundsDirectory: soundsDirectory)
+        let installedUrl = try XCTUnwrap(
+            PrivateSystemToneCatalog.installedUrl(fileName: installed.fileName, soundsDirectory: soundsDirectory)
+        )
+
+        XCTAssertEqual(installedUrl.pathExtension, "caf")
+        XCTAssertGreaterThan(try installedUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0, 0)
+        XCTAssertNoThrow(try AVAudioFile(forReading: installedUrl))
+    }
+#endif
 
     func testHiddenPreviewRedactsTitleAndBody() {
         let baseUrl = "https://example.com"

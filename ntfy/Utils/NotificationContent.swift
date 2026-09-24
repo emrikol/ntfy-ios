@@ -88,8 +88,19 @@ extension UNMutableNotificationContent {
             self.relevanceScore = 0.75
         }
 
-        if policy.soundMode == .silent || policy.isMuted {
+        if policy.isMuted {
             self.sound = nil
+        } else {
+            switch policy.soundMode {
+            case .systemDefault:
+                break
+            case .silent:
+                self.sound = nil
+            case .systemTone:
+                if self.sound != nil, let fileName = policy.systemToneFileName, !fileName.isEmpty {
+                    self.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: fileName))
+                }
+            }
         }
         if policy.isMuted {
             self.interruptionLevel = .passive
