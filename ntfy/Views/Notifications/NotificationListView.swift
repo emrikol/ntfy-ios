@@ -22,6 +22,10 @@ struct NotificationListView: View {
     @State private var showAlert = false
     @State private var activeAlert: ActiveAlert = .clear
     @State private var showCopiedConfirmation = false
+    @State private var showTopicSettings = false
+    @State private var searchText = ""
+    @State private var showUnreadOnly = false
+    @State private var policyRevision = UUID()
     
     private var subscriptionManager: SubscriptionManager {
         return SubscriptionManager(store: store)
@@ -56,7 +60,7 @@ struct NotificationListView: View {
         .environment(\.editMode, self.$editMode)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(subscription.topicName())
+                Text(subscription.displayName())
                     .font(.headline)
                     .lineLimit(1)
             }
@@ -70,6 +74,15 @@ struct NotificationListView: View {
                         }
                         Button("Send test notification") {
                             self.sendTestNotification()
+                        }
+                        Button("Topic settings") {
+                            self.showTopicSettings = true
+                        }
+                        Button(showUnreadOnly ? "Show all notifications" : "Show unread only") {
+                            showUnreadOnly.toggle()
+                        }
+                        Button("Mark all as read") {
+                            markAllRead()
                         }
                         if notificationsModel.notifications.count > 0 {
                             Button("Clear all notifications") {
@@ -98,6 +111,12 @@ struct NotificationListView: View {
                     }
                 }
             }
+        }
+        .searchable(text: $searchText, prompt: "Search notifications")
+        .sheet(isPresented: $showTopicSettings) {
+            TopicSettingsView(subscription: subscription)
+                .environmentObject(store)
+                .environmentObject(delegate)
         }
         .alert(isPresented: $showAlert) {
             switch activeAlert {
@@ -131,16 +150,18 @@ struct NotificationListView: View {
             }
         }
         .overlay(Group {
-            if notificationsModel.notifications.count == 0 {
+            if filteredNotifications.isEmpty {
                 VStack {
-                    Text("You haven't received any notifications for this topic yet.")
+                    Text(emptyStateTitle)
                         .font(.title2)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.bottom)
                     
-                    Text("To send notifications to this topic, simply PUT or POST to the topic URL.\n\nExample:\n`$ curl -d \"hi\" ntfy.sh/\(subscription.topicName())`\n\nDetailed instructions are available on [ntfy.sh](https://ntfy.sh) and [in the docs](https://ntfy.sh/docs).")
-                        .foregroundColor(.gray)
+                    if notificationsModel.notifications.isEmpty {
+                        Text("To send notifications to this topic, simply PUT or POST to the topic URL.\n\nExample:\n`$ curl -d \"hi\" ntfy.sh/\(subscription.topicName())`\n\nDetailed instructions are available on [ntfy.sh](https://ntfy.sh) and [in the docs](https://ntfy.sh/docs).")
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(40)
             }
@@ -163,20 +184,49 @@ struct NotificationListView: View {
             cancelSubscriptionNotifications()
         }
         .onDisappear {
+            markAllRead()
             if delegate.selectedBaseUrl == subscription.urlString() {
                 delegate.selectedBaseUrl = nil
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: TopicPolicyStore.didChange)) { _ in
+            policyRevision = UUID()
         }
     }
     
     @ViewBuilder
     private var notificationRows: some View {
-        ForEach(notificationsModel.notifications, id: \.self) { notification in
+        ForEach(filteredNotifications, id: \.self) { notification in
             NotificationRowView(
                 notification: notification,
                 onCopyMessage: showCopyConfirmation
             )
         }
+    }
+
+    private var filteredNotifications: [Notification] {
+        let policy = TopicPolicyStore.shared.policy(
+            baseUrl: subscription.baseUrl ?? Config.appBaseUrl,
+            topic: subscription.topicName()
+        )
+        return notificationsModel.notifications.filter { notification in
+            let matchesUnread = !showUnreadOnly || notification.time > policy.lastReadTime
+            let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let matchesSearch = trimmedQuery.isEmpty || [notification.title, notification.message, notification.tags]
+                .compactMap { $0 }
+                .contains { $0.localizedCaseInsensitiveContains(trimmedQuery) }
+            return matchesUnread && matchesSearch
+        }
+    }
+
+    private var emptyStateTitle: String {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "No notifications match your search."
+        }
+        if showUnreadOnly {
+            return "You're all caught up."
+        }
+        return "You haven't received any notifications for this topic yet."
     }
     
     private var editButton: some View {
@@ -257,6 +307,17 @@ struct NotificationListView: View {
             }
         }
     }
+
+    private func markAllRead() {
+        guard
+            let baseUrl = subscription.baseUrl,
+            let topic = subscription.topic,
+            let newest = notificationsModel.notifications.map(\.time).max()
+        else { return }
+        TopicPolicyStore.shared.markRead(baseUrl: baseUrl, topic: topic, through: newest)
+        policyRevision = UUID()
+        UIApplication.shared.applicationIconBadgeNumber = store.unreadNotificationCount()
+    }
     
     private func showCopyConfirmation() {
         withAnimation(.easeInOut(duration: 0.25)) {
@@ -269,6 +330,211 @@ struct NotificationListView: View {
         }
     }
     
+}
+
+private enum TopicMuteSelection: String, CaseIterable, Identifiable {
+    case off
+    case oneHour
+    case tonight
+    case tomorrow
+    case indefinitely
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .oneHour: return "For 1 hour"
+        case .tonight: return "Until tomorrow morning"
+        case .tomorrow: return "For 24 hours"
+        case .indefinitely: return "Indefinitely"
+        case .custom: return "Until a date"
+        }
+    }
+}
+
+struct TopicSettingsView: View {
+    private static let symbols = [
+        "bell", "exclamationmark.triangle", "server.rack", "externaldrive",
+        "house", "lock.shield", "network", "bolt", "waveform.path.ecg",
+        "shippingbox", "person", "briefcase", "gearshape", "checkmark.circle"
+    ]
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: Store
+    @EnvironmentObject private var delegate: AppDelegate
+    @ObservedObject var subscription: Subscription
+    @State private var policy: TopicPolicy
+    @State private var muteSelection: TopicMuteSelection
+    @State private var customMuteDate: Date
+
+    init(subscription: Subscription) {
+        self.subscription = subscription
+        let loaded = TopicPolicyStore.shared.policy(
+            baseUrl: subscription.baseUrl ?? Config.appBaseUrl,
+            topic: subscription.topicName()
+        )
+        _policy = State(initialValue: loaded)
+        if let mutedUntil = loaded.mutedUntil, mutedUntil > Date() {
+            if mutedUntil > Date().addingTimeInterval(60 * 60 * 24 * 365 * 20) {
+                _muteSelection = State(initialValue: .indefinitely)
+            } else {
+                _muteSelection = State(initialValue: .custom)
+            }
+            _customMuteDate = State(initialValue: mutedUntil)
+        } else {
+            _muteSelection = State(initialValue: .off)
+            _customMuteDate = State(initialValue: Date().addingTimeInterval(60 * 60))
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Topic") {
+                    TextField("Display name", text: $policy.alias)
+                        .textInputAutocapitalization(.words)
+                    Picker("Icon", selection: $policy.symbolName) {
+                        ForEach(Self.symbols, id: \.self) { symbol in
+                            Label(symbolLabel(symbol), systemImage: symbol)
+                                .tag(symbol)
+                        }
+                    }
+                }
+
+                Section(
+                    header: Text("Delivery"),
+                    footer: Text("\(policy.alertMode.detail) Apple exposes only the system default notification sound to apps; any app-wide sound choice is managed in iOS Settings.")
+                ) {
+                    Picker("Alert style", selection: $policy.alertMode) {
+                        ForEach(TopicAlertMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    Picker("Sound", selection: $policy.soundMode) {
+                        ForEach(TopicSoundMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    Button("Open iOS Notification Settings") {
+                        delegate.openNotificationSettings()
+                    }
+                }
+
+                Section(
+                    header: Text("Mute"),
+                    footer: Text("Muted topics still appear in Notification Center, without sound or an interruption.")
+                ) {
+                    Picker("Mute", selection: $muteSelection) {
+                        ForEach(TopicMuteSelection.allCases) { selection in
+                            Text(selection.label).tag(selection)
+                        }
+                    }
+                    .onChange(of: muteSelection) { newValue in
+                        applyMuteSelection(newValue)
+                    }
+                    if muteSelection == .custom {
+                        DatePicker(
+                            "Muted until",
+                            selection: $customMuteDate,
+                            in: Date()...,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .onChange(of: customMuteDate) { newValue in
+                            policy.mutedUntil = newValue
+                        }
+                    }
+                }
+
+                Section(
+                    header: Text("Privacy"),
+                    footer: Text("iOS notification preview settings can hide additional content for the entire app.")
+                ) {
+                    Picker("Notification preview", selection: $policy.previewMode) {
+                        ForEach(TopicPreviewMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                }
+
+                Section(
+                    header: Text("History"),
+                    footer: Text("Retention is applied locally on this iPhone. It does not delete messages from the ntfy server.")
+                ) {
+                    Picker("Keep notifications", selection: $policy.retentionDays) {
+                        Text("Forever").tag(0)
+                        Text("1 day").tag(1)
+                        Text("7 days").tag(7)
+                        Text("30 days").tag(30)
+                        Text("90 days").tag(90)
+                    }
+                }
+
+                Section(
+                    header: Text("Focus"),
+                    footer: Text("Add the ntfy filter inside an iOS Focus to choose which topics that Focus allows.")
+                ) {
+                    Label("Managed by iOS Focus", systemImage: "moon.circle")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("Topic settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        TopicPolicyStore.shared.save(policy)
+                        store.pruneExpiredNotifications()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func applyMuteSelection(_ selection: TopicMuteSelection) {
+        let calendar = Calendar.current
+        switch selection {
+        case .off:
+            policy.mutedUntil = nil
+        case .oneHour:
+            policy.mutedUntil = Date().addingTimeInterval(60 * 60)
+        case .tonight:
+            let tomorrow = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date().addingTimeInterval(86_400)
+            policy.mutedUntil = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: tomorrow)
+        case .tomorrow:
+            policy.mutedUntil = Date().addingTimeInterval(86_400)
+        case .indefinitely:
+            policy.mutedUntil = Date().addingTimeInterval(60 * 60 * 24 * 365 * 100)
+        case .custom:
+            policy.mutedUntil = customMuteDate
+        }
+    }
+
+    private func symbolLabel(_ symbol: String) -> String {
+        switch symbol {
+        case "bell": return "Bell"
+        case "exclamationmark.triangle": return "Warning"
+        case "server.rack": return "Server"
+        case "externaldrive": return "Drive"
+        case "house": return "Home"
+        case "lock.shield": return "Security"
+        case "network": return "Network"
+        case "bolt": return "Power"
+        case "waveform.path.ecg": return "Health"
+        case "shippingbox": return "Package"
+        case "person": return "Person"
+        case "briefcase": return "Work"
+        case "gearshape": return "System"
+        case "checkmark.circle": return "Success"
+        default: return "Topic"
+        }
+    }
 }
 
 struct NotificationListView_Previews: PreviewProvider {

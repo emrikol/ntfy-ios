@@ -8,6 +8,7 @@ struct SubscriptionListView: View {
     @EnvironmentObject private var store: Store
     @ObservedObject var subscriptionsModel = SubscriptionsObservable()
     @State private var showingAddDialog = false
+    @State private var policyRevision = UUID()
     
     private var subscriptionManager: SubscriptionManager {
         return SubscriptionManager(store: store)
@@ -80,6 +81,9 @@ struct SubscriptionListView: View {
             // Ensures subscription count stays up to date, so a pull to refresh isn't required
             pollSubscriptions()
         }
+        .onReceive(NotificationCenter.default.publisher(for: TopicPolicyStore.didChange)) { _ in
+            policyRevision = UUID()
+        }
     }
 
     private func pollSubscriptions() {
@@ -150,24 +154,47 @@ struct SubscriptionItemRowView: View {
     
     var body: some View {
         let totalNotificationCount = subscription.notificationCount()
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(subscription.displayName())
-                    .font(.headline)
-                    .bold()
-                    .lineLimit(1)
-                Spacer()
-                Text(subscription.lastNotification()?.shortDateTime() ?? "")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                Image(systemName: "chevron.forward")
-                    .font(.system(size: 12.0))
-                    .foregroundColor(.gray)
+        let unreadCount = subscription.unreadNotificationCount()
+        let policy = TopicPolicyStore.shared.policy(
+            baseUrl: subscription.baseUrl ?? Config.appBaseUrl,
+            topic: subscription.topicName()
+        )
+        HStack(spacing: 12) {
+            Image(systemName: policy.symbolName)
+                .font(.title3)
+                .foregroundColor(.accentColor)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(subscription.displayName())
+                        .font(.headline)
+                        .bold()
+                        .lineLimit(1)
+                    Spacer()
+                    Text(subscription.lastNotification()?.shortDateTime() ?? "")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                HStack(spacing: 6) {
+                    Text("\(totalNotificationCount) notification\(totalNotificationCount != 1 ? "s" : "")")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    if unreadCount > 0 {
+                        Text("\(unreadCount) unread")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor, in: Capsule())
+                            .accessibilityLabel("\(unreadCount) unread notifications")
+                    }
+                }
             }
-            Spacer()
-            Text("\(totalNotificationCount) notification\(totalNotificationCount != 1 ? "s" : "")")
-                .font(.subheadline)
-                .foregroundColor(.gray)
+            Image(systemName: "chevron.forward")
+                .font(.system(size: 12.0))
+                .foregroundColor(.secondary)
+                .accessibilityHidden(true)
         }
         .padding(.all, 4)
     }

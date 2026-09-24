@@ -3,13 +3,24 @@ import SafariServices
 import UserNotifications
 import CoreData
 
+enum NotificationDiagnosticKind {
+    case standard
+    case timeSensitive
+    case silent
+}
+
 class AppDelegate: UIResponder, UIApplicationDelegate, ObservableObject {
     private let tag = "AppDelegate"
     private let pollTopic = "~poll" // See ntfy server if ever changed
     
     // Implements navigation from notifications, see https://stackoverflow.com/a/70731861/1440785
     @Published var selectedBaseUrl: String? = nil
+    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+    @Published private(set) var alertSetting: UNNotificationSetting = .notSupported
+    @Published private(set) var soundSetting: UNNotificationSetting = .notSupported
+    @Published private(set) var timeSensitiveSetting: UNNotificationSetting = .notSupported
     @Published private(set) var criticalAlertSetting: UNNotificationSetting = .notSupported
+    @Published private(set) var scheduledDeliverySetting: UNNotificationSetting = .notSupported
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         Log.d(tag, "Launching AppDelegate")
@@ -29,7 +40,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, ObservableObject {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             let isAuthorized = settings.criticalAlertSetting == .enabled
             DispatchQueue.main.async {
+                self.authorizationStatus = settings.authorizationStatus
+                self.alertSetting = settings.alertSetting
+                self.soundSetting = settings.soundSetting
+                self.timeSensitiveSetting = settings.timeSensitiveSetting
                 self.criticalAlertSetting = settings.criticalAlertSetting
+                self.scheduledDeliverySetting = settings.scheduledDeliverySetting
                 Store.saveCriticalAlertsAuthorized(isAuthorized)
                 completion?()
             }
@@ -53,6 +69,35 @@ class AppDelegate: UIResponder, UIApplicationDelegate, ObservableObject {
                 completion(self.criticalAlertSetting == .enabled)
             }
         }
+    }
+
+    func sendDiagnosticNotification(
+        _ kind: NotificationDiagnosticKind,
+        completion: @escaping (Error?) -> Void
+    ) {
+        let content = UNMutableNotificationContent()
+        content.title = "ntfy notification test"
+        content.threadIdentifier = "ntfy-diagnostics"
+        switch kind {
+        case .standard:
+            content.body = "Standard alert with the system default sound."
+            content.sound = .default
+            content.interruptionLevel = .active
+        case .timeSensitive:
+            content.body = "Time Sensitive alert with the system default sound."
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
+        case .silent:
+            content.body = "Silent alert."
+            content.sound = nil
+            content.interruptionLevel = .passive
+        }
+        let request = UNNotificationRequest(
+            identifier: "diagnostic-\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: completion)
     }
 
     // TODO: Needs to be tested on multiple devices/iOS versions

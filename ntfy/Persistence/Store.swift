@@ -120,6 +120,7 @@ class Store: ObservableObject {
             subscription.topic = topic
             Log.d(Store.tag, "Storing subscription baseUrl=\(subscription.baseUrl ?? "?"), topic=\(topic)")
             try? context.save()
+            TopicPolicyStore.shared.ensure(baseUrl: subscription.baseUrl ?? baseUrl, topic: topic)
             savedSubscription = subscription
         }
         return savedSubscription
@@ -211,6 +212,8 @@ class Store: ObservableObject {
     }
 
     func delete(subscription: Subscription) {
+        let baseUrl = subscription.baseUrl
+        let topic = subscription.topic
         context.performAndWait {
             if let notifications = subscription.notifications {
                 notifications.forEach { notification in
@@ -220,6 +223,9 @@ class Store: ObservableObject {
             }
             context.delete(subscription)
             try? context.save()
+        }
+        if let baseUrl, let topic {
+            TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic)
         }
     }
     
@@ -321,6 +327,23 @@ class Store: ObservableObject {
                 rollbackAndRefresh()
             }
         }
+    }
+
+    func pruneExpiredNotifications() {
+        context.performAndWait {
+            guard let subscriptions = try? context.fetch(Subscription.fetchRequest()) else { return }
+            subscriptions.forEach { pruneExpiredNotifications(for: $0) }
+            try? context.save()
+        }
+    }
+
+    func unreadNotificationCount() -> Int {
+        var count = 0
+        context.performAndWait {
+            guard let subscriptions = try? context.fetch(Subscription.fetchRequest()) else { return }
+            count = subscriptions.reduce(0) { $0 + $1.unreadNotificationCount() }
+        }
+        return count
     }
     
     // MARK: Users
@@ -586,7 +609,26 @@ class Store: ObservableObject {
             }
             subscription.lastNotificationId = message.id
         }
+        pruneExpiredNotifications(for: subscription)
         try context.save()
+    }
+
+    private func pruneExpiredNotifications(for subscription: Subscription) {
+        guard
+            let baseUrl = subscription.baseUrl,
+            let topic = subscription.topic
+        else { return }
+        let retentionDays = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic).retentionDays
+        guard retentionDays > 0 else { return }
+        let cutoff = Int64(Date().addingTimeInterval(TimeInterval(-retentionDays * 86_400)).timeIntervalSince1970)
+        let expired = (subscription.notifications?.allObjects as? [Notification] ?? []).filter { $0.time < cutoff }
+        expired.forEach { notification in
+            deleteAttachmentLocalFile(for: notification)
+            context.delete(notification)
+        }
+        if !expired.isEmpty {
+            Log.d(Store.tag, "Pruned \(expired.count) notification(s) for \(subscription.urlString())")
+        }
     }
 
     private func applyMessage(_ message: Message, to subscription: Subscription) throws {

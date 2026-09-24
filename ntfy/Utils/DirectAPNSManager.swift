@@ -1,5 +1,11 @@
 import Foundation
 
+struct DirectAPNSStatus {
+    let hasDeviceToken: Bool
+    let lastSuccessfulSync: Date?
+    let lastError: String?
+}
+
 /// Registers this app's APNs token and hashed ntfy subscriptions with a direct APNs relay
 /// hosted alongside each self-hosted ntfy server.
 final class DirectAPNSManager {
@@ -9,6 +15,8 @@ final class DirectAPNSManager {
     private static let deviceTokenKey = "directAPNSDeviceToken"
     private static let registeredBaseUrlsKey = "directAPNSRegisteredBaseUrls"
     private static let pendingCredentialDeletionKey = "directAPNSPendingCredentialDeletion"
+    private static let lastSuccessfulSyncKey = "directAPNSLastSuccessfulSync"
+    private static let lastErrorKey = "directAPNSLastError"
     private let tag = "DirectAPNSManager"
     private let defaults = UserDefaults(suiteName: Store.appGroup)!
     private let defaultsLock = NSLock()
@@ -28,6 +36,17 @@ final class DirectAPNSManager {
         defaultsLock.unlock()
         Log.d(tag, "APNs token received: \(token.prefix(12))...")
         syncAll()
+    }
+
+    func status() -> DirectAPNSStatus {
+        defaultsLock.lock()
+        defer { defaultsLock.unlock() }
+        let timestamp = defaults.double(forKey: Self.lastSuccessfulSyncKey)
+        return DirectAPNSStatus(
+            hasDeviceToken: !(defaults.string(forKey: Self.deviceTokenKey) ?? "").isEmpty,
+            lastSuccessfulSync: timestamp > 0 ? Date(timeIntervalSince1970: timestamp) : nil,
+            lastError: defaults.string(forKey: Self.lastErrorKey)
+        )
     }
 
     func syncAll() {
@@ -91,10 +110,13 @@ final class DirectAPNSManager {
 
     private func sendRegistration(baseUrl: String, topics: [String], token: String, user: BasicUser?) {
         guard let user else {
+            let message = "Authenticated ntfy user required for \(shortUrl(url: baseUrl))"
+            recordFailure(message)
             Log.w(tag, "Skipping direct APNs registration for \(baseUrl): authenticated ntfy user required")
             return
         }
         guard let url = URL(string: normalizeBaseUrl(baseUrl) + Self.registrationPath) else {
+            recordFailure("Invalid relay URL for \(shortUrl(url: baseUrl))")
             Log.w(tag, "Skipping direct APNs registration for invalid URL \(baseUrl)")
             return
         }
@@ -119,11 +141,13 @@ final class DirectAPNSManager {
         updateStoredBaseUrl(baseUrl, key: Self.registeredBaseUrlsKey, insert: true)
         session.dataTask(with: request) { _, response, error in
             if let error {
+                self.recordFailure(error.localizedDescription)
                 Log.w(self.tag, "Direct APNs registration failed for \(baseUrl)", error)
                 return
             }
             guard let response = response as? HTTPURLResponse, response.statusCode == 204 else {
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                self.recordFailure("Relay returned HTTP \(status) for \(shortUrl(url: baseUrl))")
                 Log.w(self.tag, "Direct APNs registration failed for \(baseUrl), HTTP \(status)")
                 return
             }
@@ -136,8 +160,28 @@ final class DirectAPNSManager {
             } else {
                 self.updateStoredBaseUrl(baseUrl, key: Self.pendingCredentialDeletionKey, insert: false)
             }
+            self.recordSuccess()
             Log.d(self.tag, "Direct APNs registration updated for \(baseUrl), topics=\(hashedTopics.count)")
         }.resume()
+    }
+
+    private func recordSuccess() {
+        defaultsLock.lock()
+        defaults.set(Date().timeIntervalSince1970, forKey: Self.lastSuccessfulSyncKey)
+        defaults.removeObject(forKey: Self.lastErrorKey)
+        defaultsLock.unlock()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .directAPNSStatusDidChange, object: nil)
+        }
+    }
+
+    private func recordFailure(_ message: String) {
+        defaultsLock.lock()
+        defaults.set(message, forKey: Self.lastErrorKey)
+        defaultsLock.unlock()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .directAPNSStatusDidChange, object: nil)
+        }
     }
 
     private func storedDeviceToken() -> String? {
@@ -182,6 +226,10 @@ final class DirectAPNSManager {
         return "production"
         #endif
     }
+}
+
+extension Foundation.Notification.Name {
+    static let directAPNSStatusDidChange = Foundation.Notification.Name("DirectAPNSStatusDidChange")
 }
 
 private struct RelayRegistration: Encodable {

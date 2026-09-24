@@ -3,6 +3,8 @@ import UserNotifications
 
 extension UNMutableNotificationContent {
     func modify(message: Message, baseUrl: String) {
+        let policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: message.topic)
+
         // Body and title
         if let body = message.message {
             self.body = body
@@ -13,7 +15,7 @@ extension UNMutableNotificationContent {
         if let title = message.title, title != "" {
             self.title = title
         } else {
-            self.title = topicShortUrl(baseUrl: baseUrl, topic: message.topic)
+            self.title = policy.displayName
         }
         
         // Emojify title or message
@@ -36,9 +38,9 @@ extension UNMutableNotificationContent {
         // permissions. This is described in https://stackoverflow.com/a/44580916/1440785
         configureNotificationActions(message: message)
         
-        // Group by topic, and only elevate priority 5 alerts to critical when the user opted in
-        // and iOS has granted critical alert permission.
+        // Group by topic and expose a stable value that iOS Focus filters can match.
         self.threadIdentifier = topicUrl(baseUrl: baseUrl, topic: message.topic)
+        self.filterCriteria = policy.id
         
         // Map priorities to interruption level (light up screen, ...) and relevance (order)
         switch message.priority {
@@ -68,6 +70,43 @@ extension UNMutableNotificationContent {
             self.interruptionLevel = .active
             self.relevanceScore = 0.5
         }
+
+        switch policy.alertMode {
+        case .publisher:
+            break
+        case .silent:
+            self.sound = nil
+            self.interruptionLevel = .passive
+            self.relevanceScore = 0
+        case .active:
+            self.sound = .default
+            self.interruptionLevel = .active
+            self.relevanceScore = 0.5
+        case .timeSensitive:
+            self.sound = .default
+            self.interruptionLevel = .timeSensitive
+            self.relevanceScore = 0.75
+        }
+
+        if policy.soundMode == .silent || policy.isMuted {
+            self.sound = nil
+        }
+        if policy.isMuted {
+            self.interruptionLevel = .passive
+            self.relevanceScore = 0
+        }
+
+        switch policy.previewMode {
+        case .full:
+            break
+        case .titleOnly:
+            self.body = "New notification"
+        case .hidden:
+            self.title = policy.displayName
+            self.body = "New notification"
+        }
+
+        self.badge = NSNumber(value: Store.shared.unreadNotificationCount())
         
         // Make sure the userInfo matches, so that when the notification is tapped, the AppDelegate
         // can properly navigate to the right topic and re-assemble the message.

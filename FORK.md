@@ -22,6 +22,14 @@ Registration state is durable: removing the final subscription or deleting a use
 
 The notification extension fetches the complete backlog after an APNs wake-up so messages received while the phone was offline are not lost. It also handles message updates/deletes, clears notification-center entries requested by actions, and keeps priorities 1 and 2 silent as specified by ntfy.
 
+## Notification controls
+
+The private app adds local per-topic controls for aliases and SF Symbol icons, publisher/quiet/standard/Time Sensitive delivery, System Default or Silent sound, lock-screen preview privacy, mute-until schedules, and automatic history retention. Topic policies live in the shared app group so the main app and notification service extension apply the same settings.
+
+iOS does not provide third-party apps with a public picker for its built-in notification tones. Per-topic sound therefore offers the two supported choices: System Default and Silent. The Notification Delivery screen links to iOS settings for any app-wide sound controls the OS exposes.
+
+The app also provides native iOS Focus filters keyed by the same stable hashed topic identifiers sent with notifications. Search, unread counts, app badge updates, QR-code subscription, local delivery tests, and direct-relay diagnostics are built in. Critical Alerts remain gated on Apple's restricted entitlement; Time Sensitive delivery and Focus filters are the supported Focus/DND controls.
+
 ## Local secrets
 
 Never commit any of these files:

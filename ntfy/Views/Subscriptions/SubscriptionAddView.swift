@@ -1,4 +1,5 @@
 import SwiftUI
+import VisionKit
 
 struct SubscriptionAddView: View {
     private let tag = "SubscriptionAddView"
@@ -18,6 +19,8 @@ struct SubscriptionAddView: View {
     @State private var loading = false
     @State private var addError: String?
     @State private var loginError: String?
+    @State private var showingScanner = false
+    @State private var scannerError: String?
 
     private var subscriptionManager: SubscriptionManager {
         return SubscriptionManager(store: store)
@@ -50,6 +53,16 @@ struct SubscriptionAddView: View {
                     TextField("Topic name, e.g. phil_alerts", text: $topic)
                         .disableAutocapitalization()
                         .disableAutocorrection(true)
+                    Button {
+                        if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
+                            scannerError = nil
+                            showingScanner = true
+                        } else {
+                            scannerError = "QR scanning is not available on this device."
+                        }
+                    } label: {
+                        Label("Scan subscription QR code", systemImage: "qrcode.viewfinder")
+                    }
                 }
                 Section(
                     footer:
@@ -65,6 +78,9 @@ struct SubscriptionAddView: View {
             }
             if let error = addError {
                 ErrorView(error: error)
+            }
+            if let scannerError {
+                ErrorView(error: scannerError)
             }
         }
         .navigationTitle("Add subscription")
@@ -89,6 +105,22 @@ struct SubscriptionAddView: View {
 
                 }
                 .disabled(!isAddViewValid())
+            }
+        }
+        .sheet(isPresented: $showingScanner) {
+            NavigationStack {
+                SubscriptionQRScannerView { value in
+                    applyScannedSubscription(value)
+                    showingScanner = false
+                }
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle("Scan ntfy subscription")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingScanner = false }
+                    }
+                }
             }
         }
     }
@@ -217,6 +249,40 @@ struct SubscriptionAddView: View {
     private func cancelAction() {
         resetAndHide()
     }
+
+    private func applyScannedSubscription(_ scannedValue: String) {
+        let value = scannedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
+            topic = value
+            return
+        }
+
+        if scheme == "http" || scheme == "https" {
+            let scannedTopic = url.lastPathComponent
+            guard !scannedTopic.isEmpty else {
+                scannerError = "That QR code does not contain an ntfy topic."
+                return
+            }
+            topic = scannedTopic
+            baseUrl = url.deletingLastPathComponent().absoluteString
+            useAnother = normalizeBaseUrl(baseUrl) != normalizeBaseUrl(store.getDefaultBaseUrl())
+            return
+        }
+
+        if scheme == "ntfy" {
+            let pathTopic = url.pathComponents.last(where: { $0 != "/" })
+            if let pathTopic, let host = url.host {
+                topic = pathTopic
+                baseUrl = "https://\(host)"
+                useAnother = normalizeBaseUrl(baseUrl) != normalizeBaseUrl(store.getDefaultBaseUrl())
+            } else if let host = url.host {
+                topic = host
+            }
+            return
+        }
+
+        scannerError = "That QR code is not an ntfy subscription URL."
+    }
     
     private var selectedBaseUrl: String {
         return normalizeBaseUrl((useAnother) ? baseUrl : store.getDefaultBaseUrl())
@@ -235,6 +301,60 @@ struct SubscriptionAddView: View {
             useToken = false
             username = ""
             password = ""
+        }
+    }
+}
+
+private struct SubscriptionQRScannerView: UIViewControllerRepresentable {
+    let onScan: (String) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onScan: onScan)
+    }
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let controller = DataScannerViewController(
+            recognizedDataTypes: [.barcode()],
+            qualityLevel: .balanced,
+            recognizesMultipleItems: false,
+            isHighFrameRateTrackingEnabled: false,
+            isPinchToZoomEnabled: true,
+            isGuidanceEnabled: true,
+            isHighlightingEnabled: true
+        )
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
+        guard !uiViewController.isScanning else { return }
+        try? uiViewController.startScanning()
+    }
+
+    static func dismantleUIViewController(_ uiViewController: DataScannerViewController, coordinator: Coordinator) {
+        uiViewController.stopScanning()
+    }
+
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let onScan: (String) -> Void
+        private var hasScanned = false
+
+        init(onScan: @escaping (String) -> Void) {
+            self.onScan = onScan
+        }
+
+        func dataScanner(
+            _ dataScanner: DataScannerViewController,
+            didAdd addedItems: [RecognizedItem],
+            allItems: [RecognizedItem]
+        ) {
+            guard !hasScanned else { return }
+            for item in addedItems {
+                guard case .barcode(let barcode) = item, let value = barcode.payloadStringValue else { continue }
+                hasScanned = true
+                onScan(value)
+                return
+            }
         }
     }
 }

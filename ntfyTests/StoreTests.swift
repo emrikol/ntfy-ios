@@ -123,4 +123,116 @@ final class StoreTests: XCTestCase {
             XCTAssertEqual(content.interruptionLevel, .passive)
         }
     }
+
+    func testTopicPolicyRoundTripPreservesQualityOfLifeSettings() {
+        let suiteName = "TopicPolicyStoreTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let policies = TopicPolicyStore(defaults: defaults)
+        let baseUrl = "https://example.com"
+        let topic = "backups"
+        let mutedUntil = Date().addingTimeInterval(3_600)
+        let expected = TopicPolicy(
+            baseUrl: baseUrl,
+            topic: topic,
+            alias: "Nightly backups",
+            symbolName: "externaldrive",
+            alertMode: .timeSensitive,
+            soundMode: .silent,
+            previewMode: .titleOnly,
+            mutedUntil: mutedUntil,
+            retentionDays: 30,
+            lastReadTime: 42
+        )
+
+        policies.save(expected)
+
+        XCTAssertEqual(policies.policy(baseUrl: baseUrl, topic: topic), expected)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    func testSilentTopicPolicyOverridesPublisherPriority() {
+        let baseUrl = "https://example.com"
+        let topic = "silent-\(UUID().uuidString)"
+        var policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic)
+        policy.alertMode = .silent
+        TopicPolicyStore.shared.save(policy)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        let content = UNMutableNotificationContent()
+        let message = Message(id: "id", time: 1, event: "message", topic: topic, message: "hello", priority: 5)
+
+        content.modify(message: message, baseUrl: baseUrl)
+
+        XCTAssertNil(content.sound)
+        XCTAssertEqual(content.interruptionLevel, .passive)
+        XCTAssertEqual(content.filterCriteria, topicHash(baseUrl: baseUrl, topic: topic))
+    }
+
+    func testTimeSensitiveTopicPolicyElevatesLowPriorityMessage() {
+        let baseUrl = "https://example.com"
+        let topic = "urgent-\(UUID().uuidString)"
+        var policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic)
+        policy.alertMode = .timeSensitive
+        TopicPolicyStore.shared.save(policy)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        let content = UNMutableNotificationContent()
+        let message = Message(id: "id", time: 1, event: "message", topic: topic, message: "hello", priority: 1)
+
+        content.modify(message: message, baseUrl: baseUrl)
+
+        XCTAssertNotNil(content.sound)
+        XCTAssertEqual(content.interruptionLevel, .timeSensitive)
+    }
+
+    func testHiddenPreviewRedactsTitleAndBody() {
+        let baseUrl = "https://example.com"
+        let topic = "private-\(UUID().uuidString)"
+        var policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic)
+        policy.alias = "Private alerts"
+        policy.previewMode = .hidden
+        TopicPolicyStore.shared.save(policy)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        let content = UNMutableNotificationContent()
+        let message = Message(id: "id", time: 1, event: "message", topic: topic, message: "secret", title: "secret title")
+
+        content.modify(message: message, baseUrl: baseUrl)
+
+        XCTAssertEqual(content.title, "Private alerts")
+        XCTAssertEqual(content.body, "New notification")
+    }
+
+    func testRetentionPrunesOnlyExpiredMessages() throws {
+        let store = Store(inMemory: true)
+        let baseUrl = "https://example.com"
+        let topic = "retention-\(UUID().uuidString)"
+        let subscription = store.saveSubscription(baseUrl: baseUrl, topic: topic)
+        var policy = TopicPolicyStore.shared.policy(baseUrl: baseUrl, topic: topic)
+        policy.retentionDays = 7
+        TopicPolicyStore.shared.save(policy)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        let now = Int64(Date().timeIntervalSince1970)
+
+        store.save(notificationsFromMessages: [
+            Message(id: "old", time: now - 8 * 86_400, event: "message", topic: topic, message: "old"),
+            Message(id: "new", time: now - 6 * 86_400, event: "message", topic: topic, message: "new")
+        ], withSubscription: subscription)
+
+        let notifications = try XCTUnwrap(subscription.notifications?.allObjects as? [ntfy.Notification])
+        XCTAssertEqual(notifications.map(\.id), ["new"])
+    }
+
+    func testMarkReadUpdatesUnreadCount() {
+        let store = Store(inMemory: true)
+        let baseUrl = "https://example.com"
+        let topic = "read-\(UUID().uuidString)"
+        let subscription = store.saveSubscription(baseUrl: baseUrl, topic: topic)
+        defer { TopicPolicyStore.shared.remove(baseUrl: baseUrl, topic: topic) }
+        store.save(notificationsFromMessages: [
+            Message(id: "one", time: 10, event: "message", topic: topic, message: "one"),
+            Message(id: "two", time: 20, event: "message", topic: topic, message: "two")
+        ], withSubscription: subscription)
+
+        XCTAssertEqual(subscription.unreadNotificationCount(), 2)
+        TopicPolicyStore.shared.markRead(baseUrl: baseUrl, topic: topic, through: 10)
+        XCTAssertEqual(subscription.unreadNotificationCount(), 1)
+    }
 }
